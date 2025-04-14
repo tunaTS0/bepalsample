@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>自習記録システム</title>
+  <link rel="icon" href="data:,"> <!-- favicon対策 -->
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 20px;
+    }
+    #reader {
+      width: 300px;
+      height: 300px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #controls {
+      margin-top: 20px;
+    }
+    .button {
+      padding: 10px 20px;
+      margin: 10px;
+      font-size: 16px;
+      background-color: #007BFF;
+      color: #FFF;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .button:hover {
+      background-color: #0056b3;
+    }
+    .button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    #message {
+      margin-top: 10px;
+      font-weight: bold;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <h1>自習記録システム</h1>
+  <p>
+    QRコードをスキャンしてください。<br />
+    【新規の場合は「入室」を、<br />
+    既に入室している生徒の場合は「一時退室」または「退室」、<br />
+    一時退室中の場合は「再入室」を選択】してください。
+  </p>
+
+  <!-- QRコードリーダーの表示領域 -->
+  <div id="reader">QRコード読み取り中…</div>
+
+  <!-- イベント選択ボタン -->
+  <div id="controls">
+    <button id="enter-btn" class="button" disabled>入室</button>
+    <button id="temp-exit-btn" class="button" disabled>一時退室</button>
+    <button id="exit-btn" class="button" disabled>退室</button>
+    <button id="reentry-btn" class="button" disabled>再入室</button>
+  </div>
+
+  <!-- メッセージ表示エリア -->
+  <div id="message">QRコードをスキャンしてください。</div>
+
+  <!-- html5-qrcode ライブラリの読み込み -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script>
+    /********** グローバル変数 **********/
+    var studentRecords = {};         // 各生徒の記録を保持するオブジェクト
+    var currentScannedStudent = null;  // 直近にスキャンされた生徒ID
+
+    /********** HTML要素の取得 **********/
+    const messageElement = document.getElementById("message");
+    const enterButton = document.getElementById("enter-btn");
+    const tempExitButton = document.getElementById("temp-exit-btn");
+    const exitButton = document.getElementById("exit-btn");
+    const reentryButton = document.getElementById("reentry-btn");
+
+    /********** html5-qrcode の初期化 **********/
+    const html5QrCode = new Html5Qrcode("reader");
+
+    /********** スキャナー起動/再起動 **********/
+    function startScanner() {
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        onScanSuccess,
+        onScanError
+      ).catch((err) => {
+        console.error("スキャナー起動エラー:", err);
+        messageElement.textContent = "スキャナーの起動に失敗しました。";
+      });
+    }
+
+    // セッションリセット（イベント実行後、自動で次の生徒のスキャンへ）
+    function resetSession() {
+      currentScannedStudent = null;
+      messageElement.textContent = "QRコードをスキャンしてください。";
+      // 各ボタンを無効化
+      enterButton.disabled = true;
+      tempExitButton.disabled = true;
+      exitButton.disabled = true;
+      reentryButton.disabled = true;
+      startScanner();
+    }
+
+    /********** QRコード読み取り成功時のコールバック **********/
+    function onScanSuccess(qrCodeMessage) {
+      // スキャンごとにスキャナーを停止して生徒IDを固定
+      html5QrCode.stop().then(() => {
+        currentScannedStudent = qrCodeMessage;
+        // すでに記録があるかどうかで分岐
+        if (studentRecords.hasOwnProperty(qrCodeMessage)) {
+          const record = studentRecords[qrCodeMessage];
+          if (record.status === "entered") {
+            // 既に入室状態なら、一時退室・退室が選択可能
+            messageElement.innerHTML = `生徒ID ${qrCodeMessage} は既に入室中です。<br>「一時退室」または「退室」を選択してください。`;
+            enterButton.disabled = true;
+            tempExitButton.disabled = false;
+            exitButton.disabled = false;
+            reentryButton.disabled = true;
+          } else if (record.status === "tempExited") {
+            // 一時退室中なら、再入室または退室が選択可能
+            messageElement.innerHTML = `生徒ID ${qrCodeMessage} は一時退室中です。<br>「再入室」または「退室」を選択してください。`;
+            enterButton.disabled = true;
+            tempExitButton.disabled = true;
+            exitButton.disabled = false;
+            reentryButton.disabled = false;
+          } else if (record.status === "exited") {
+            // 退室済みなら新規セッションとして扱い、入室が可能
+            messageElement.innerHTML = `生徒ID ${qrCodeMessage} の新規セッションです。<br>「入室」を選択してください。`;
+            enterButton.disabled = false;
+            tempExitButton.disabled = true;
+            exitButton.disabled = true;
+            reentryButton.disabled = true;
+          }
+        } else {
+          // 初めての生徒なら新規として入室のみ有効
+          messageElement.textContent = `新規生徒ID ${qrCodeMessage} をスキャンしました。<br>「入室」を選択してください。`;
+          enterButton.disabled = false;
+          tempExitButton.disabled = true;
+          exitButton.disabled = true;
+          reentryButton.disabled = true;
+        }
+      }).catch((err) => {
+        console.error("スキャナー停止エラー:", err);
+      });
+    }
+
+    /********** エラーコールバック **********/
+    function onScanError(error) {
+      console.error("スキャンエラー:", error);
+    }
+
+    /********** Google Apps Script 連携 **********/
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbzTi9cChk2-A7EmYzETH4qjx0FkhuxST1EIxFmyIl5S6rn_qkkCoieqPl1ZAXq9XBqD/exec";
+
+    function sendEventToSpreadsheet(eventType, startTime = null, endTime = null) {
+      if (!currentScannedStudent) {
+        alert("まずQRコードをスキャンしてください！");
+        return;
+      }
+      const data = {
+        studentId: currentScannedStudent,
+        eventType: eventType,
+        startTime: startTime,
+        endTime: endTime
+      };
+
+      fetch(scriptUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      })
+      .then(response => {
+        console.log(`イベント【${eventType}】送信完了`, response);
+        messageElement.innerHTML = `イベント【${eventType}】を記録しました。`;
+      })
+      .catch(err => {
+        console.error("イベント送信エラー:", err);
+        messageElement.textContent = "イベント送信に失敗しました。";
+      });
+    }
+
+    /********** 各ボタンのクリックイベント **********/
+    // 「入室」ボタン（新規）
+    enterButton.addEventListener("click", () => {
+      if (!currentScannedStudent) {
+        alert("生徒IDが未スキャンです。");
+        return;
+      }
+      const timeNow = new Date().toISOString();
+      studentRecords[currentScannedStudent] = {
+        status: "entered",
+        enterTime: timeNow,
+        events: [{ event: "入室", time: timeNow }]
+      };
+      sendEventToSpreadsheet("入室", timeNow);
+      console.log(`入室: ${currentScannedStudent}, 時刻: ${timeNow}`);
+      setTimeout(resetSession, 2000);
+    });
+
+    // 「一時退室」ボタン（入室中→一時退室に変更）
+    tempExitButton.addEventListener("click", () => {
+      if (!currentScannedStudent || !studentRecords[currentScannedStudent] || studentRecords[currentScannedStudent].status !== "entered") {
+        alert("入室記録がありません。");
+        return;
+      }
+      const timeNow = new Date().toISOString();
+      studentRecords[currentScannedStudent].events.push({ event: "一時退室", time: timeNow });
+      studentRecords[currentScannedStudent].status = "tempExited";
+      sendEventToSpreadsheet("一時退室");
+      console.log(`一時退室: ${currentScannedStudent}`);
+      setTimeout(resetSession, 2000);
+    });
+
+    // 「再入室」ボタン（一時退室中→再入室に変更）
+    reentryButton.addEventListener("click", () => {
+      if (!currentScannedStudent ||
+          !studentRecords[currentScannedStudent] ||
+          studentRecords[currentScannedStudent].status !== "tempExited") {
+        alert("再入室可能な記録がありません。");
+        return;
+      }
+      const timeNow = new Date().toISOString();
+      studentRecords[currentScannedStudent].events.push({ event: "再入室", time: timeNow });
+      studentRecords[currentScannedStudent].status = "entered";
+      sendEventToSpreadsheet("再入室");
+      console.log(`再入室: ${currentScannedStudent}`);
+      setTimeout(resetSession, 2000);
+    });
+
+    // 「退室」ボタン（入室中または一時退室中→退室に変更）
+    exitButton.addEventListener("click", () => {
+      if (!currentScannedStudent ||
+          !studentRecords[currentScannedStudent] ||
+          (studentRecords[currentScannedStudent].status !== "entered" &&
+           studentRecords[currentScannedStudent].status !== "tempExited")) {
+        alert("入室記録がありません。");
+        return;
+      }
+      const timeNow = new Date().toISOString();
+      studentRecords[currentScannedStudent].events.push({ event: "退室", time: timeNow });
+      studentRecords[currentScannedStudent].status = "exited";
+      sendEventToSpreadsheet("退室", studentRecords[currentScannedStudent].enterTime, timeNow);
+      console.log(`退室: ${currentScannedStudent}, 入室: ${studentRecords[currentScannedStudent].enterTime}, 退室: ${timeNow}`);
+      setTimeout(resetSession, 2000);
+    });
+
+    /********** 初回スキャナー起動 **********/
+    startScanner();
+  </script>
+</body>
+</html>
